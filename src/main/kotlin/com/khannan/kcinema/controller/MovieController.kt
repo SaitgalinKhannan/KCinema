@@ -1,6 +1,8 @@
 package com.khannan.kcinema.controller
 
 import com.khannan.kcinema.model.*
+import jakarta.servlet.http.HttpServletResponse
+import org.springframework.core.io.Resource
 import org.springframework.core.io.support.ResourceRegion
 import org.springframework.http.HttpHeaders
 import org.springframework.http.ResponseEntity
@@ -17,5 +19,5 @@ interface MovieController {
     fun createMovie(movie: Movie, movieFile: MovieMedia)
     fun updateMovie(movieId: Int, movie: Movie, movieFile: MovieMedia)
     fun deleteMovie(movieId: Int)
-    fun movieMedia(id: Int, headers: HttpHeaders): ResponseEntity<ResourceRegion>
+    fun movieMedia(id: Int, headers: HttpHeaders, response: HttpServletResponse): ResponseEntity<Resource>
 }
