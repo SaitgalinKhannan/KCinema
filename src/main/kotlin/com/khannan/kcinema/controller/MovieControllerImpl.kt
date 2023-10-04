@@ -5,16 +5,18 @@ import com.khannan.kcinema.model.DetailedMovieInfo
 import com.khannan.kcinema.model.Movie
 import com.khannan.kcinema.model.MovieMedia
 import com.khannan.kcinema.service.MovieService
-import jakarta.servlet.http.HttpServletResponse
+import org.springframework.core.io.FileSystemResource
 import org.springframework.core.io.FileUrlResource
 import org.springframework.core.io.Resource
-import org.springframework.http.HttpHeaders
-import org.springframework.http.HttpStatus
-import org.springframework.http.MediaType
-import org.springframework.http.ResponseEntity
+import org.springframework.core.io.support.ResourceRegion
+import org.springframework.http.*
 import org.springframework.web.bind.annotation.*
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody
 import java.io.IOException
+import java.io.OutputStream
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import kotlin.math.min
 
 
 @RestController
@@ -28,7 +30,7 @@ class MovieControllerImpl(val service: MovieService) : MovieController {
 
     @GetMapping("/search/{title}")
     override fun searchMovieByTitle(@PathVariable title: String): List<Movie> {
-        TODO("Not yet implemented")
+        return service.searchMovieByTitle(title)
     }
 
     @GetMapping("/info/{movieId}")
@@ -52,32 +54,29 @@ class MovieControllerImpl(val service: MovieService) : MovieController {
 
     @GetMapping("/user/movies")
     override fun movieByUser(userId: Int): List<Movie> {
-        TODO("Not yet implemented")
+        return service.movieByUser(userId)
     }
 
     override fun allMovies(): List<Movie> {
-        TODO("Not yet implemented")
+        return service.allMovies()
     }
 
     override fun createMovie(movie: Movie, movieFile: MovieMedia) {
-        TODO("Not yet implemented")
+        service.createMovie(movie, movieFile)
     }
 
     override fun updateMovie(movieId: Int, movie: Movie, movieFile: MovieMedia) {
-        TODO("Not yet implemented")
+        service.updateMovie(movieId, movie, movieFile)
     }
 
     override fun deleteMovie(movieId: Int) {
-        TODO("Not yet implemented")
+        service.deleteMovie(movieId)
     }
 
     @GetMapping("/download/{id}")
-    override fun movieMedia(
-        @PathVariable id: Int,
-        @RequestHeader headers: HttpHeaders,
-        response: HttpServletResponse
-    ): ResponseEntity<Resource> {
-
+    override fun downloadMovieMedia(
+        @PathVariable id: Int, @RequestHeader headers: HttpHeaders
+    ): ResponseEntity<StreamingResponseBody> {
         val path = service.movieMedia(id)
         val video = FileUrlResource(path.filePath)
 
@@ -85,70 +84,11 @@ class MovieControllerImpl(val service: MovieService) : MovieController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build()
         }
 
-
-        if (headers.range.size != 0) {
-            val totalLength = video.file.length()
-            val byteRange = headers.range.first()
-            val start = byteRange.getRangeStart(0L)
-            val end = byteRange.getRangeEnd(headers.contentLength)
-
-            if (start >= totalLength) {
-                return ResponseEntity.status(HttpStatus.REQUESTED_RANGE_NOT_SATISFIABLE).build()
-            }
-
-            val contentLength = end - start + 1
-            val httpHeaders = HttpHeaders()
-
-            httpHeaders.add("Content-Range", "bytes $start-$end/$totalLength")
-            httpHeaders.add("Accept-Ranges", "bytes")
-            httpHeaders.add("Content-Length", contentLength.toString())
-            httpHeaders.contentType = MediaType.APPLICATION_OCTET_STREAM
-
-            try {
+        try {
+            val streamingResponseBody = StreamingResponseBody { outputStream1: OutputStream ->
                 val inputStream = Files.newInputStream(video.file.toPath())
                 inputStream.use { input ->
-                    val outputStream = response.outputStream
-                    outputStream.use { output ->
-                        val buffer = ByteArray(4096)
-                        var bytesRead: Int
-                        var bytesToRead = contentLength
-
-                        while (bytesToRead > 0) {
-                            bytesRead = input.read(buffer)
-                            if (bytesRead == -1) {
-                                break
-                            }
-
-                            if (bytesToRead >= bytesRead) {
-                                output.write(buffer, 0, bytesRead)
-                                bytesToRead -= bytesRead
-                            } else {
-                                output.write(buffer, 0, bytesToRead.toInt())
-                                bytesToRead = 0
-                            }
-                        }
-                    }
-                }
-
-                return ResponseEntity
-                    .status(HttpStatus.PARTIAL_CONTENT)
-                    .headers(httpHeaders).body(video)
-            } catch (e: IOException) {
-                return ResponseEntity
-                    .status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .build()
-            }
-        } else {
-            val httpHeaders = HttpHeaders()
-            httpHeaders.contentType = MediaType.APPLICATION_OCTET_STREAM
-            httpHeaders.contentLength = video.file.length()
-            httpHeaders.setContentDispositionFormData("attachment", video.filename)
-
-            try {
-                val inputStream = Files.newInputStream(video.file.toPath())
-                inputStream.use { input ->
-                    val outputStream = response.outputStream
-                    outputStream.use { output ->
+                    outputStream1.use { output ->
                         val buffer = ByteArray(4096)
                         var bytesRead: Int
 
@@ -161,13 +101,51 @@ class MovieControllerImpl(val service: MovieService) : MovieController {
                         }
                     }
                 }
-
-                return ResponseEntity.ok().headers(httpHeaders).body(video)
-            } catch (e: IOException) {
-                return ResponseEntity
-                    .status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .build()
             }
+
+            val filename = video.file.name
+            val httpHeaders = HttpHeaders()
+            httpHeaders.contentDisposition =
+                ContentDisposition.builder("attachment").filename(filename, StandardCharsets.UTF_8).build()
+            httpHeaders.contentType = MediaType.APPLICATION_OCTET_STREAM
+            httpHeaders.contentLength = video.file.length()
+
+            return ResponseEntity.ok().headers(httpHeaders).body(streamingResponseBody)
+        } catch (e: IOException) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build()
+        }
+    }
+
+    @GetMapping("/media/{id}")
+    override fun movieMedia(@RequestHeader headers: HttpHeaders, @PathVariable id: Int): ResponseEntity<ResourceRegion> {
+        val path = service.movieMedia(id)
+        val media: Resource = FileSystemResource(path.filePath)
+        val region = resourceRegion(media, headers)
+
+        return ResponseEntity.status(HttpStatus.PARTIAL_CONTENT).contentType(
+            MediaTypeFactory.getMediaType(media).orElse(MediaType.APPLICATION_OCTET_STREAM)
+        ).body(region)
+    }
+
+    private fun resourceRegion(media: Resource, headers: HttpHeaders): ResourceRegion {
+        var contentLength: Long = 0
+
+        try {
+            contentLength = media.contentLength()
+        } catch (e: IOException) {
+            e.printStackTrace()
+        }
+
+        val range = headers.getRange()
+        return if (range.isNotEmpty()) {
+            val start = range.first().getRangeStart(contentLength)
+            val end = if (range.first().getRangeEnd(contentLength) > 1) range.first()
+                .getRangeEnd(contentLength) else contentLength - 1
+            val rangeLength = min((end - start + 1).toDouble(), contentLength.toDouble()).toLong()
+            ResourceRegion(media, start, rangeLength)
+        } else {
+            val rangeLength = min((1024 * 1024).toDouble(), contentLength.toDouble()).toLong()
+            ResourceRegion(media, 0, rangeLength)
         }
     }
 }

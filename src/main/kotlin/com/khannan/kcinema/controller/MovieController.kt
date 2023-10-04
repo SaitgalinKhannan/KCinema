@@ -1,11 +1,13 @@
 package com.khannan.kcinema.controller
 
-import com.khannan.kcinema.model.*
-import jakarta.servlet.http.HttpServletResponse
-import org.springframework.core.io.Resource
+import com.khannan.kcinema.model.Actor
+import com.khannan.kcinema.model.DetailedMovieInfo
+import com.khannan.kcinema.model.Movie
+import com.khannan.kcinema.model.MovieMedia
 import org.springframework.core.io.support.ResourceRegion
 import org.springframework.http.HttpHeaders
 import org.springframework.http.ResponseEntity
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody
 
 interface MovieController {
     fun searchMovieByTitle(title: String): List<Movie>
@@ -19,5 +21,6 @@ interface MovieController {
     fun createMovie(movie: Movie, movieFile: MovieMedia)
     fun updateMovie(movieId: Int, movie: Movie, movieFile: MovieMedia)
     fun deleteMovie(movieId: Int)
-    fun movieMedia(id: Int, headers: HttpHeaders, response: HttpServletResponse): ResponseEntity<Resource>
+    fun downloadMovieMedia(id: Int, headers: HttpHeaders): ResponseEntity<StreamingResponseBody>
+    fun movieMedia(headers: HttpHeaders, id: Int): ResponseEntity<ResourceRegion>
 }
