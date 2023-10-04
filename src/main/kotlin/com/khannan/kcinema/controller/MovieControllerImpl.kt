@@ -128,7 +128,7 @@ class MovieControllerImpl(val service: MovieService) : MovieController {
     }
 
     private fun resourceRegion(media: Resource, headers: HttpHeaders): ResourceRegion {
-        var contentLength: Long = 0
+        var contentLength = 0L
 
         try {
             contentLength = media.contentLength()
